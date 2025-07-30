@@ -9,7 +9,8 @@ public class DummyChannelHandlerContext extends AbstractChannelHandlerContext {
     public static ChannelHandlerContext DUMMY_INSTANCE = new DummyChannelHandlerContext(
             null,
             null,
-            null,
+            // 修改为一个空字符串，否则会报空指针异常
+            "",
             true,
             true
     );

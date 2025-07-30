@@ -77,7 +77,7 @@ public class ByteBufExamples {
     public static void heapBuffer() {
         // 获取ByteBuf引用（从某处得到）
         ByteBuf heapBuf = BYTE_BUF_FROM_SOMEWHERE; //get reference form somewhere
-        
+
         // 检查ByteBuf是否有一个支撑数组
         if (heapBuf.hasArray()) {
             // 如果有，则获取对该数组的直接引用
@@ -94,6 +94,49 @@ public class ByteBufExamples {
             // 使用数组、偏移量和长度作为参数调用你的方法
             handleArray(array, offset, length);
         }
+    }
+
+    /**
+     * 演示ByteBuf通用数据访问方式
+     * 
+     * 无论ByteBuf是否有支撑数组，这些方法都能正常工作：
+     * 1. 随机访问 - 不改变读写指针，可重复访问
+     * 2. 顺序访问 - 移动读写指针，适合流式处理  
+     * 3. 批量复制 - 复制数据到新数组，与传统API兼容
+     */ 
+    public static void accessDataWithoutBackingArray() {
+        ByteBuf buffer = Unpooled.buffer(64);
+        
+        // 写入测试数据
+        buffer.writeBytes("Hello World".getBytes());
+        buffer.writeInt(42);
+        
+        // 方式1：随机访问（不移动指针）
+        System.out.println("随机访问:");
+        // 读取第6个字节
+        char c = (char) buffer.getByte(5);  // 'W'
+        System.out.println("第6个字符: " + c);
+        // 读取int值（从第11字节开始）
+        int value = buffer.getInt(11);
+        System.out.println("Int值: " + value);
+        
+        // 方式2：顺序访问（移动指针）
+        System.out.println("\n顺序访问:");
+        buffer.readerIndex(0);  // 重置读指针
+        // 逐字节读取字符串
+        while (buffer.readableBytes() > 4) {  // 保留4字节给int
+            System.out.print((char) buffer.readByte());
+        }
+        System.out.println("\nInt值: " + buffer.readInt());
+        
+        // 方式3：批量复制（兼容传统API）
+        System.out.println("\n批量复制:");
+        byte[] data = new byte[buffer.writerIndex()];
+        buffer.getBytes(0, data);  // 复制全部数据，不移动指针
+        System.out.println("复制了 " + data.length + " 字节");
+        
+        // 释放资源
+        buffer.release();
     }
 
     /**
@@ -613,5 +656,102 @@ public class ByteBufExamples {
         //...
     }
 
+    /**
+     * ByteBuf使用最佳实践示例
+     * 
+     * 这个方法集中展示了使用ByteBuf时的所有关键注意事项：
+     * 1. 🔥 引用计数管理 - 防止内存泄漏的关键
+     * 2. 🛡️ 异常安全 - 确保在任何情况下都能正确释放资源
+     * 3. 📏 边界检查 - 避免IndexOutOfBoundsException
+     * 4. 🚀 性能优化 - 选择合适的缓冲区类型和操作方式
+     * 5. ⚡ 容量管理 - 预估大小，减少扩容开销
+     */
+    public static void byteBufBestPractices() {
+        // 🎯 最佳实践1：使用池化分配器，预估合适容量
+        ByteBufAllocator allocator = PooledByteBufAllocator.DEFAULT;
+        ByteBuf buffer = null;
+        
+        try {
+            // 预估容量，避免频繁扩容（性能优化）
+            buffer = allocator.buffer(1024);
+            
+            // 🎯 最佳实践2：批量操作优于逐字节操作
+            byte[] data = "Hello Netty World!".getBytes();
+            buffer.writeBytes(data);  // ✅ 批量写入
+            buffer.writeInt(2024);
+            
+            // 🎯 最佳实践3：读取前检查边界，避免异常
+            buffer.readerIndex(0);  // 重置读指针
+            
+            // ✅ 安全的读取方式
+            if (buffer.readableBytes() >= data.length) {
+                byte[] readData = new byte[data.length];
+                buffer.readBytes(readData);
+                System.out.println("读取字符串: " + new String(readData));
+            }
+            
+            // ✅ 检查剩余可读字节
+            if (buffer.readableBytes() >= 4) {
+                int year = buffer.readInt();
+                System.out.println("读取年份: " + year);
+            }
+            
+            // 🎯 最佳实践4：共享时使用retain()
+            if (needToShareBuffer()) {
+                buffer.retain();  // 增加引用计数
+                // 注意：接收者需要调用release()
+                passToAnotherComponent(buffer);
+            }
+            
+            // 🎯 最佳实践5：检查引用计数状态
+            System.out.println("当前引用计数: " + buffer.refCnt());
+            
+        } catch (Exception e) {
+            // 🛡️ 异常处理中记录错误但不阻断资源释放
+            System.err.println("处理ByteBuf时发生错误: " + e.getMessage());
+            
+        } finally {
+            // 🔥 最关键：确保资源释放（防止内存泄漏）
+            safeRelease(buffer);
+        }
+    }
+    
+    /**
+     * 安全释放ByteBuf的工具方法
+     * 避免重复释放异常，确保资源正确回收
+     */
+    private static void safeRelease(ByteBuf buffer) {
+        if (buffer != null && buffer.refCnt() > 0) {
+            try {
+                buffer.release();
+                System.out.println("✅ ByteBuf已安全释放");
+            } catch (Exception e) {
+                System.err.println("⚠️ 释放ByteBuf时出错: " + e.getMessage());
+            }
+        }
+    }
+    
+    /**
+     * 模拟需要共享buffer的场景
+     */
+    private static boolean needToShareBuffer() {
+        return false; // 示例中返回false
+    }
+    
+    /**
+     * 模拟传递buffer给其他组件
+     */
+    private static void passToAnotherComponent(ByteBuf buffer) {
+        // 其他组件使用完后需要调用buffer.release()
+        System.out.println("传递buffer给其他组件处理");
+    }
+
+    public static void main(String[] args) {
+        // 演示最佳实践
+        byteBufBestPractices();
+        
+        // 其他示例
+        heapBuffer();
+    }
 
 }
